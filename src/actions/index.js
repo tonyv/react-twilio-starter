@@ -125,6 +125,79 @@ export function requestStateChange(newStateName) {
   }
 }
 
+export function requestSyncClient(clientName) {
+  return (dispatch, getState) => {
+    return fetch(urls.syncToken, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: "clientName="+clientName
+    })
+    .then(response => response.json())
+    .then(json => {
+        let syncClient = new Twilio.Sync.Client(json.token);
+
+        syncClient.map('current_workers').then(function (map) {
+          map.on('itemAdded', function(worker) {
+            debugger;
+            console.log('key', item.key);
+            console.log('JSON data', item.value);
+          });
+
+          //Note that there are two separate events for map item adds and map item updates:
+          map.on('itemUpdated', function(item) {
+            const sid = item.item.descriptor.key
+            const activity = item.item.descriptor.data.activity
+            const workerUpdate = { sid: sid, activity: activity }
+            activity == 'Idle' ? dispatch(workerAdded(workerUpdate)) : dispatch(workerRemoved(workerUpdate))
+          });
+        });
+    })
+  }
+}
+
+export function initializeSyncMap() {
+  console.log('INITIALIZING SYNC MAP')
+  return (dispatch, getState) => {
+    return fetch(urls.syncMap, {
+      method: "GET",
+    })
+    .then(response => response.json())
+    .then(json => {
+        console.log('json =>', json)
+    })
+  }
+}
+
+export function initializeWorkers(workerSid) {
+  return (dispatch, getState) => {
+    return fetch(urls.taskRouterToken, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "workerSid="+workerSid
+      })
+      .then(response => response.json())
+      .then(json => {
+        console.log(json)
+
+        let workspace = new Twilio.TaskRouter.Workspace(json.token);
+        workspace.workers.fetch(
+          function(error, workerList) {
+            if(error) {
+              console.log(error.code);
+              console.log(error.message);
+              return;
+            }
+            dispatch(workersInitialized(workerList.data));
+          }
+        );
+      })
+  }
+}
+
 export function requestWorker(workerSid) {
   return (dispatch, getState) => {
     dispatch(registerWorker())
@@ -138,20 +211,19 @@ export function requestWorker(workerSid) {
       .then(response => response.json())
       .then(json => {
         console.log(json)
-        debugger
         // Register your TaskRouter Worker
         // --params token, debug, connectActivitySid, disconnectActivitySid, closeExistingSession
         // --see https://www.twilio.com/docs/api/taskrouter/worker-js#parameters
         let worker = new Twilio.TaskRouter.Worker(json.token, true, null, null, true )
+
         dispatch(workerClientUpdated(worker))
-        console.log(worker)
         worker.activities.fetch((error, activityList) => {
           if (error) {
             console.log(error, "Activity Fetch Error")
             dispatch(errorTaskRouter("Fetching Activites: " + error.message))
           } else {
             console.log(activityList)
-             dispatch(activitiesUpdated(activityList.data))
+            dispatch(activitiesUpdated(activityList.data))
           }
         })
         worker.fetchChannels((error, channels) => {
@@ -167,9 +239,11 @@ export function requestWorker(workerSid) {
         dispatch(requestRefreshReservations())
 
         worker.on("ready", (worker) => {
+          const clientName = typeof(worker.attributes.contact_uri) !== 'undefined' ? worker.attributes.contact_uri.split(":").pop() : worker.friendlyName
           dispatch(workerConnectionUpdate("ready"))
           dispatch(workerUpdated(worker))
-          dispatch(requestPhone(worker.attributes.contact_uri.split(":").pop()))
+          dispatch(requestPhone(clientName))
+          dispatch(requestSyncClient(clientName))
           //dispatch(requestChat(worker.friendlyName))
           console.log("worker obj", worker)
         })
@@ -234,7 +308,7 @@ export function requestWorker(workerSid) {
             case 'voice':
               if (reservation.task.attributes.type == 'transfer') {
                 reservation.call('15304412022',
-                                  'https://absurd-pizzas-9864.twil.io/internal-transfer-callback?conferenceSid=' + reservation.task.attributes.confName,
+                                  urls.internalTransferCallback + '?conferenceSid=' + reservation.task.attributes.confName,
                                   null,
                                   'true')
               } else {
@@ -242,7 +316,7 @@ export function requestWorker(workerSid) {
                 console.log(customerLeg, "customer call sid")
                 console.log("Create a conference for agent and customer")
                 var options = {
-                    "ConferenceStatusCallback": urls.baseUrl + "/conference-events?call+sid=" + customerLeg,
+                    "ConferenceStatusCallback": urls.conferenceEvents + "?customer_sid=" + customerLeg,
                     "ConferenceStatusCallbackEvent": "start,leave,join,end",
                     "EndConferenceOnExit": "false",
                     "Beep": "false"
@@ -265,12 +339,18 @@ export function requestWorker(workerSid) {
               console.log(reservation, "OUTBOUTND")
               reservation.call(
                 from,
-                'https://absurd-pizzas-9864.twil.io/' + "outbound-callback?dialOut=" + to + "&from=" + from + "&sid=" + taskSid,
-                urls.baseUrl + "taskrouter-event",
+                urls.callOutboundCallback + "?ToPhone="+to+"&FromPhone="+from+"&Sid="+taskSid,
+                null,
                 "true",
                 "",
                 "",
-                urls.baseUrl + "taskrouter-event"
+                function(error, reservation) {
+                  if (error) {
+                    console.log(error)
+                    console.log(error.message)
+                  }
+                  console.log(reservation)
+                }
               )
 
               break
@@ -289,6 +369,27 @@ function activitiesUpdated(activities) {
   return {
     type: 'ACTIVITIES_UPDATED',
     activities: activities
+  }
+}
+
+function workersInitialized(workers) {
+  return {
+    type: 'WORKERS_INITIALIZED',
+    workers: workers
+  }
+}
+
+function workerAdded(workerUpdate) {
+  return {
+    type: 'WORKER_ADDED',
+    workerUpdate: workerUpdate
+  }
+}
+
+function workerRemoved(workerUpdate) {
+  return {
+    type: 'WORKER_REMOVED',
+    workerUpdate: workerUpdate
   }
 }
 
@@ -421,13 +522,17 @@ export function phoneHold(confSid, callSid) {
 export function phoneTransfer(confName) {
    return (dispatch, getState) => {
      const { taskrouter } = getState()
+
+     // Specify a client name to transfer to here
+     // let agentID = TWILIO CLIENT NAME
+
      return fetch(urls.internalTransfer,
        {
           headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
          },
          method: "POST",
-         body: "agent_id=bcoyle&conferenceSid=" + confName + "&token="+taskrouter.worker.token,
+         body: "agent_id=" + agentID + "&conferenceSid=" + confName + "&token="+taskrouter.worker.token,
        })
        .then(response => response.json())
        .then( json => {
