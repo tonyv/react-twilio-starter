@@ -181,13 +181,13 @@ export function requestWorker(workerSid) {
           dispatch(requestWorker(workerSid))
         })
         worker.on('error', (error) => {
-          // You would want to provide the agent a notication of the error
+          // You would want to provide the agent a notification of the error
           console.log("Websocket had an error: "+ error.response + " with message: "+error.message)
           console.log(error)
           dispatch(errorTaskRouter("Error: " + error.message))
         })
         worker.on("disconnected", function() {
-          // You would want to provide the agent a notication of the error
+          // You would want to provide the agent a notification of the error
           dispatch(workerConnectionUpdate("disconnected"))
           dispatch(errorTaskRouter("Web socket disconnection: " + error.message))
           console.log("Websocket has disconnected");
@@ -232,9 +232,9 @@ export function requestWorker(workerSid) {
 
           switch (reservation.task.taskChannelUniqueName) {
             case 'voice':
-              if (reservation.task.attributes.type == 'transfer') {
+              if (reservation.task.attributes.type === 'transfer') {
                 reservation.call('15304412022',
-                                  'https://absurd-pizzas-9864.twil.io/internal-transfer-callback?conferenceSid=' + reservation.task.attributes.confName,
+                                  urls.internalTransferCallback + '?conferenceSid=' + reservation.task.attributes.confName,
                                   null,
                                   'true')
               } else {
@@ -242,7 +242,7 @@ export function requestWorker(workerSid) {
                 console.log(customerLeg, "customer call sid")
                 console.log("Create a conference for agent and customer")
                 var options = {
-                    "ConferenceStatusCallback": urls.baseUrl + "/conference-events?call+sid=" + customerLeg,
+                    "ConferenceStatusCallback": urls.conferenceEvents + "?call_sid=" + customerLeg,
                     "ConferenceStatusCallbackEvent": "start,leave,join,end",
                     "EndConferenceOnExit": "false",
                     "Beep": "false"
@@ -265,12 +265,12 @@ export function requestWorker(workerSid) {
               console.log(reservation, "OUTBOUTND")
               reservation.call(
                 from,
-                'https://absurd-pizzas-9864.twil.io/' + "outbound-callback?dialOut=" + to + "&from=" + from + "&sid=" + taskSid,
-                urls.baseUrl + "taskrouter-event",
+                urls.callOutboundCallback + "?dialOut=" + to + "&from=" + from + "&sid=" + taskSid,
+                urls.taskRouterEvents,
                 "true",
                 "",
                 "",
-                urls.baseUrl + "taskrouter-event"
+                urls.taskRouterEvents,
               )
 
               break
